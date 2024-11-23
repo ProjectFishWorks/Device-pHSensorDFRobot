@@ -115,7 +115,7 @@ float avgPhValue()
         {
             voltage = (analogReadMilliVolts(PH_PIN)/1000.0); // read the voltage
             phValue = DFRobot_PH_sensor.readPH(voltage, temperature); // convert voltage to pH with temperature compensation
-            runningTotalPhReads =
+            runningTotalPhReads = runningTotalPhReads + phValue; // add the pH value to the running total
         }
     }
         sumOfAvgPhReads = (runningTotalPhReads / avgCount);
@@ -129,7 +129,7 @@ float avgPhValue()
         Serial.println(phValue, 2);
 #endif
     delay(updatePHvalues);
-    return phValue;
+    return sumOfAvgPhReads;
 }
 
 // Callback function for received messages from the CAN bus
@@ -176,7 +176,7 @@ void receive_message(uint8_t nodeID, uint16_t messageID, uint64_t data)
 void sendPHMessage()
 {
     // Send the pH value to the CAN bus
-    uint64_t PHvalue = updatePH();
+    uint64_t PHvalue = avgPhValue();
     core.sendMessage(SEND_PH_MESSAGE_ID, &PHvalue);
 
     if (pHAlarmOnOff == 1)
@@ -214,10 +214,3 @@ void sendPHMessage()
     }
     delay(sendPhMessageFreq);
 }
-
-/*
-float readTemperature()
-{
-  //add your code here to get the temperature from your temperature sensor
-}
-*/
