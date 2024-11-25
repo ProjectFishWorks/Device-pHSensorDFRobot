@@ -23,7 +23,7 @@
 
 #define debuging
 
-#define sendPhMessageFreq 4000 // frequency of sending LED intensity messages to the App
+#define sendPhMessageFreq 10000 // frequency of sending LED intensity messages to the App
 #define updatePHvalues 1000    // delay time in milliseconds to update the pH value
 
 #define avgCount 100 // number of samples to average
@@ -37,7 +37,7 @@ float sumOfAvgPhReads = 0; // sum of the average
 #define LOW_PH_ALARM_MESSAGE_ID 0x0A01    // 2561
 #define HIGH_PH_ALARM_MESSAGE_ID 0x0A02   // 2562
 #define PH_ALARM_ON_OFF_MESSAGE_ID 0x0A03 // 2563
-#define GET_TEMP_MESSAGE_ID 0x0A04        // 2564
+#define GET_TEMP_MESSAGE_ID 2572        // 2564
 
 #define ALARM_MESSAGE_ID 901 // ID in hex is 0x385
 
@@ -46,8 +46,8 @@ bool pHAlarmOnOff;
 uint8_t hasSentPHAlarm = 0;
 uint8_t hasSentNoPHAlarm = 0;
 
-uint64_t lowPHalarmValue = 0;
-uint64_t highPHalarmValue = 0;
+float lowPHalarmValue = 0;
+float highPHalarmValue = 0;
 uint64_t errorData1 = 1;
 uint64_t errorData0 = 0;
 
@@ -69,7 +69,7 @@ void receive_message(uint8_t nodeID, uint16_t messageID, uint64_t data);
 float avgPhValue();
 
 // Function to send the pH value to the CAN bus
-void sendPHMessage();
+void sendPHMessage(void *parameters);
 
 //-------------------------------------------------------Setup-------------------------------------------------------------------------
 
@@ -93,32 +93,31 @@ void setup()
     {
         Serial.println("Failed to initialize driver");
     }
+    xTaskCreate(sendPHMessage, "sendPHMessage", 10000, NULL, 1, NULL);
 }
 
 //-------------------------------------------------------Loop-------------------------------------------------------------------------
 
 void loop()
 {
-    avgPhValue();
+    //updatePH();
 
-    sendPHMessage();
+    //sendPHMessage();
+
+    DFRobot_PH_sensor.calibration(voltage,temperature);           // calibration process by Serail CMD
+
+    delay(10);
 }
 
 ////////////////////////////////////////////// put function definitions here:  /////////////////////////////////////////////////////////
 
 float avgPhValue()
 {
-    for(int i=avgCount; i<avgCount; i++)
-    {
-    startAvg = millis();
-        if(millis() < (startAvg + timeBetweenPhSamples))
-        {
-            voltage = (analogReadMilliVolts(PH_PIN)/1000.0); // read the voltage
-            phValue = DFRobot_PH_sensor.readPH(voltage, temperature); // convert voltage to pH with temperature compensation
-            runningTotalPhReads = runningTotalPhReads + phValue; // add the pH value to the running total
-        }
-    }
-        sumOfAvgPhReads = (runningTotalPhReads / avgCount);
+        // temperature = readTemperature();         // read your temperature sensor to execute temperature compensation
+        // voltage = analogRead(PH_PIN)/1024.0*5000;  // read the voltage
+        voltage = (analogReadMilliVolts(PH_PIN)); // read the voltage
+        //phValue = random(0, 14);                       // random pH value for testing
+        phValue = DFRobot_PH_sensor.readPH(voltage, temperature); // convert voltage to pH with temperature compensation
 
 #ifdef debuging
         
@@ -128,8 +127,7 @@ float avgPhValue()
         Serial.print("^C  pH:");
         Serial.println(phValue, 2);
 #endif
-    delay(updatePHvalues);
-    return sumOfAvgPhReads;
+    return phValue;
 }
 
 // Callback function for received messages from the CAN bus
@@ -149,35 +147,40 @@ void receive_message(uint8_t nodeID, uint16_t messageID, uint64_t data)
             Serial.println("pH alarm on off value is " + String(data));
             break;
         case LOW_PH_ALARM_MESSAGE_ID:
-            lowPHalarmValue = data;
-            Serial.println("Low pH alarm value is " + String(data));
+            memccpy(&lowPHalarmValue, &data, sizeof(data), sizeof(lowPHalarmValue));
+            Serial.println("Low pH alarm value is " + String(lowPHalarmValue));
             hasSentPHAlarm = 0;
             hasSentNoPHAlarm = 0;
             break;
 
         case HIGH_PH_ALARM_MESSAGE_ID:
-            highPHalarmValue = data;
-            Serial.println("High pH alarm value is " + String(data));
+            memccpy(&highPHalarmValue, &data, sizeof(data), sizeof(highPHalarmValue));
+            Serial.println("High pH alarm value is " + String(highPHalarmValue));
             hasSentPHAlarm = 0;
             hasSentNoPHAlarm = 0;
-            break;
-
-        case GET_TEMP_MESSAGE_ID:
-            temperature = data;
-            Serial.println("Temperature value is " + String(data));
             break;
 
         default:
             break;
         }
+    }else if(nodeID == 162 && messageID == GET_TEMP_MESSAGE_ID){
+        Serial.println("Temperature raw value is " + String(data));
+        memccpy(&temperature, &data, sizeof(data), sizeof(temperature));
+        Serial.println("Temperature float value is " + String(temperature));
     }
 }
 
-void sendPHMessage()
+void sendPHMessage(void *parameters)
 {
-    // Send the pH value to the CAN bus
-    uint64_t PHvalue = avgPhValue();
-    core.sendMessage(SEND_PH_MESSAGE_ID, &PHvalue);
+    while (1)
+    {
+        // Send the pH value to the CAN bus
+    phValue = updatePH();
+
+    Serial.println("low pH alarm value is " + String(lowPHalarmValue));
+    Serial.println("high pH alarm value is " + String(highPHalarmValue));   
+
+    core.sendMessage(SEND_PH_MESSAGE_ID, &phValue);
 
     if (pHAlarmOnOff == 1)
     {
@@ -190,7 +193,7 @@ void sendPHMessage()
             Serial.println("------------pH Message triggered------------");
             Serial.println("Has sent alarm is = " + String(hasSentPHAlarm));
 #endif
-            if (hasSentPHAlarm == 1)
+            if (hasSentPHAlarm == 0)
             {
                 core.sendMessage(ALARM_MESSAGE_ID, &errorData1);
                 hasSentPHAlarm = 1;
@@ -213,4 +216,13 @@ void sendPHMessage()
         }
     }
     delay(sendPhMessageFreq);
+    }
+    
 }
+
+/*
+float readTemperature()
+{
+  //add your code here to get the temperature from your temperature sensor
+}
+*/
