@@ -23,11 +23,11 @@
 
 #define debuging
 
-#define sendPhMessageFreq 10000 // frequency of sending LED intensity messages to the App
+#define sendPhMessageFreq 30000 // frequency of sending LED intensity messages to the App
 #define updatePHvalues 1000    // delay time in milliseconds to update the pH value
 
 #define avgCount 100 // number of samples to average
-#define timeBetweenPhSamples 1000 // time between samples in milliseconds
+#define timeBetweenPhSamples 500 // time between samples in milliseconds
 unsigned long startAvg = millis(); // start time for averaging
 float runningTotalPhReads = 0; // running total of pH reads
 float sumOfAvgPhReads = 0; // sum of the average
@@ -52,7 +52,6 @@ uint64_t errorData1 = 1;
 uint64_t errorData0 = 0;
 
 float voltage;
-float phValue;
 float temperature = 20;     // temperature value updated from the CAN bus
 
 // PH sensor object
@@ -66,7 +65,7 @@ NodeControllerCore core;
 void receive_message(uint8_t nodeID, uint16_t messageID, uint64_t data);
 
 // Function to update the pH value
-float avgPhValue();
+void avgPhValue(void *parameters);
 
 // Function to send the pH value to the CAN bus
 void sendPHMessage(void *parameters);
@@ -94,6 +93,7 @@ void setup()
         Serial.println("Failed to initialize driver");
     }
     xTaskCreate(sendPHMessage, "sendPHMessage", 10000, NULL, 1, NULL);
+    xTaskCreate(avgPhValue, "avgPhValue", 10000, NULL, 1, NULL);
 }
 
 //-------------------------------------------------------Loop-------------------------------------------------------------------------
@@ -111,23 +111,28 @@ void loop()
 
 ////////////////////////////////////////////// put function definitions here:  /////////////////////////////////////////////////////////
 
-float avgPhValue()
+void avgPhValue(void *parameters)
 {
-        // temperature = readTemperature();         // read your temperature sensor to execute temperature compensation
+    while(1){
+       // temperature = readTemperature();         // read your temperature sensor to execute temperature compensation
         // voltage = analogRead(PH_PIN)/1024.0*5000;  // read the voltage
         voltage = (analogReadMilliVolts(PH_PIN)); // read the voltage
         //phValue = random(0, 14);                       // random pH value for testing
-        phValue = DFRobot_PH_sensor.readPH(voltage, temperature); // convert voltage to pH with temperature compensation
+        float phValue = DFRobot_PH_sensor.readPH(voltage, temperature); // convert voltage to pH with temperature compensation
+        sumOfAvgPhReads += phValue;
+        runningTotalPhReads++;
 
-#ifdef debuging
+        #ifdef debuging
         
-        Serial.println("voltage = " + String(voltage));
-        Serial.print("temperature:");
-        Serial.print(temperature, 1);
-        Serial.print("^C  pH:");
-        Serial.println(phValue, 2);
-#endif
-    return phValue;
+            Serial.println("voltage = " + String(voltage));
+            Serial.print("temperature:");
+            Serial.print(temperature, 1);
+            Serial.print("^C  pH:");
+            Serial.println(phValue, 2);
+        #endif
+        delay(timeBetweenPhSamples);
+    }
+ 
 }
 
 // Callback function for received messages from the CAN bus
@@ -175,10 +180,12 @@ void sendPHMessage(void *parameters)
     while (1)
     {
         // Send the pH value to the CAN bus
-    phValue = updatePH();
+    float phValue = sumOfAvgPhReads / runningTotalPhReads;
 
     Serial.println("low pH alarm value is " + String(lowPHalarmValue));
-    Serial.println("high pH alarm value is " + String(highPHalarmValue));   
+    Serial.println("high pH alarm value is " + String(highPHalarmValue));
+
+    Serial.println("pH average value is " + String(phValue));   
 
     core.sendMessage(SEND_PH_MESSAGE_ID, &phValue);
 
@@ -215,6 +222,8 @@ void sendPHMessage(void *parameters)
             }
         }
     }
+    sumOfAvgPhReads = 0;
+    runningTotalPhReads = 0;
     delay(sendPhMessageFreq);
     }
     
